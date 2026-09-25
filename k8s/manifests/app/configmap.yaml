@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fintech-app-config
+  namespace: fintech-prod
+  labels:
+    app: fintech-app
+    environment: production
+data:
+  # Configuración de la aplicación
+  APP_ENV: "production"
+  LOG_LEVEL: "info"
+  API_TIMEOUT: "5000"
+  
+  # Configuración de base de datos
+  DB_HOST: "postgres.finance.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "fintech_db"
+  
+  # Configuración de caché
+  CACHE_ENABLED: "true"
+  CACHE_TTL: "3600"
+  
+  # Configuración de rate limiting
+  RATE_LIMIT_REQUESTS: "1000"
+  RATE_LIMIT_WINDOW: "1s"
+  
+  # Configuración de métricas
+  METRICS_ENABLED: "true"
+  METRICS_PORT: "9090"
+  
+  # Configuración de health checks
+  HEALTH_CHECK_INTERVAL: "30s"
+  HEALTH_CHECK_TIMEOUT: "5s"
+
+---

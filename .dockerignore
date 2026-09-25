@@ -1,0 +1,80 @@
+# Version control
+.git
+.gitignore
+.svn
+.hg
+
+# IDE and editor files
+.idea
+.vscode
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build outputs and caches
+dist
+build
+coverage
+.nyc_output
+.cache
+.parcel-cache
+
+# Dependencies
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.development
+.env.test
+.env.production
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Test files
+__tests__
+tests
+*.test.js
+*.spec.js
+coverage
+.nyc_output
+
+# Documentation
+README.md
+docs/
+*.md
+LICENSE
+
+# CI/CD
+.github
+.gitlab-ci.yml
+Jenkinsfile
+.azure-pipelines
+
+# Terraform and infrastructure
+terraform/
+*.tf
+*.tfstate*
+*.tfvars
+.k8s/
+
+# Temporary files
+tmp
+temp
+*.tmp
+*.temp
+
+# Docker files (avoid recursive build)
+Dockerfile
+docker-compose*.yml
+.docker

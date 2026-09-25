@@ -1,0 +1,109 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fintech-ingress
+  namespace: fintech-prod
+  annotations:
+    # TLS automático con cert-manager
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # Rate limiting: máximo 100 requests por segundo por IP
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    # Rate limiting: máximo 50 conexiones simultáneas por IP
+    nginx.ingress.kubernetes.io/limit-connections: "50"
+    # Timeouts
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "5"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+    # Buffers
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    # Seguridad
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/enable-rewrite-log: "true"
+    # CORS
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://app.fintechinnovations.com"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type, X-Request-ID"
+    # Rate limiting por endpoint crítico
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.fintechinnovations.com
+        - www.fintechinnovations.com
+      secretName: fintech-tls-secret
+  rules:
+    - host: api.fintechinnovations.com
+      http:
+        paths:
+          - path: /api/v1/payments
+            pathType: Prefix
+            backend:
+              service:
+                name: fintech-payments-service
+                port:
+                  number: 8080
+          - path: /api/v1/accounts
+            pathType: Prefix
+            backend:
+              service:
+                name: fintech-accounts-service
+                port:
+                  number: 8080
+          - path: /api/v1/transactions
+            pathType: Prefix
+            backend:
+              service:
+                name: fintech-transactions-service
+                port:
+                  number: 8080
+          - path: /api/v1/users
+            pathType: Prefix
+            backend:
+              service:
+                name: fintech-users-service
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fintech-api-gateway
+                port:
+                  number: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fintech-ingress-web
+  namespace: fintech-prod
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/limit-rps: "200"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "5"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - app.fintechinnovations.com
+      secretName: fintech-web-tls-secret
+  rules:
+    - host: app.fintechinnovations.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fintech-web-frontend
+                port:
+                  number: 80
+---
+# Stub: Ingress principal para API y frontend con TLS automático y rate limiting.
+# El estudiante debe configurar los paths de servicios según la arquitectura de microservicios.

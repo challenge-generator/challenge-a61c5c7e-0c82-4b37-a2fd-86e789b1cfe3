@@ -1,0 +1,319 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - prod
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  KUBERNETES_VERSION: '1.28.0'
+  HELM_VERSION: '3.13.0'
+  TERRAFORM_VERSION: '1.6.0'
+  CHECKOV_VERSION: '3.1.0'
+  TRIVY_VERSION: '0.48.0'
+
+jobs:
+  build:
+    name: Build Application
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      short_sha: ${{ steps.meta.outputs.short_sha }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run build script
+        run: |
+          chmod +x scripts/build.sh
+          ./scripts/build.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: image.tar
+          retention-days: 7
+
+  static-analysis:
+    name: Static Analysis (Checkov)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Checkov on Terraform
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: ./terraform
+          framework: terraform
+          output_format: sarif
+          output_file_path: results/checkov-terraform.sarif
+
+      - name: Run Checkov on Kubernetes manifests
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: ./k8s
+          framework: kubernetes
+          output_format: sarif
+          output_file_path: results/checkov-k8s.sarif
+
+      - name: Run Checkov on Dockerfile
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: dockerfile
+          output_format: sarif
+          output_file_path: results/checkov-dockerfile.sarif
+
+      - name: Upload Checkov results
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkov-results
+          path: results/
+
+      - name: Publish checkov results to PR
+        uses: dorny/paths-filter@v2
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            changes:
+              - 'terraform/**'
+              - 'k8s/**'
+              - 'Dockerfile'
+        if: filters.changes
+
+  container-scan:
+    name: Container Image Scan (Trivy)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker image
+        run: |
+          docker load -i /tmp/image.tar
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'os,lib'
+
+      - name: Upload Trivy results
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-results
+          path: trivy-results.sarif
+
+      - name: Fail on critical vulnerabilities
+        if: failure()
+        run: |
+          echo "Critical vulnerabilities found in container image"
+          exit 1
+
+  test-integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [build, static-analysis, container-scan]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/v${KUBERNETES_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Run healthcheck
+        run: |
+          chmod +x scripts/healthcheck.sh
+          ./scripts/healthcheck.sh staging
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: test-integration
+    if: github.ref == 'refs/heads/develop' || github.event.inputs.environment == 'staging'
+    environment:
+      name: staging
+      url: https://staging.fintechinnovations.example.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/v${KUBERNETES_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Set up Helm
+        run: |
+          curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+          chmod 700 get_helm.sh
+          ./get_helm.sh --version v${HELM_VERSION}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Update kubeconfig for staging
+        run: |
+          aws eks update-kubeconfig --name fintech-staging-cluster --region ${{ secrets.AWS_REGION }}
+
+      - name: Deploy Kubernetes manifests
+        run: |
+          kubectl apply -f k8s/manifests/app/ -n staging
+          kubectl apply -f k8s/manifests/networking/ -n staging
+
+      - name: Deploy Prometheus
+        run: |
+          kubectl apply -f k8s/manifests/monitoring/prometheus.yaml -n monitoring
+
+      - name: Deploy Grafana dashboards
+        run: |
+          kubectl apply -f k8s/manifests/monitoring/grafana-dashboard.yaml -n monitoring
+
+      - name: Run healthcheck after deployment
+        run: |
+          sleep 30
+          kubectl rollout status deployment/app -n staging --timeout=300s
+          ./scripts/healthcheck.sh staging
+
+      - name: Deploy HPA
+        run: |
+          kubectl apply -f k8s/manifests/app/hpa.yaml -n staging
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/main' || github.event.inputs.environment == 'prod'
+    environment:
+      name: production
+      url: https://fintechinnovations.example.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/v${KUBERNETES_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Set up Helm
+        run: |
+          curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+          chmod 700 get_helm.sh
+          ./get_helm.sh --version v${HELM_VERSION}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Update kubeconfig for production
+        run: |
+          aws eks update-kubeconfig --name fintech-prod-cluster --region ${{ secrets.AWS_REGION }}
+
+      - name: Blue/Green deployment - Update production
+        run: |
+          kubectl apply -f k8s/manifests/app/ -n production
+          kubectl apply -f k8s/manifests/networking/ -n production
+
+      - name: Deploy monitoring stack
+        run: |
+          kubectl apply -f k8s/manifests/monitoring/prometheus.yaml -n monitoring
+          kubectl apply -f k8s/manifests/monitoring/grafana-dashboard.yaml -n monitoring
+
+      - name: Verify production deployment
+        run: |
+          sleep 60
+          kubectl rollout status deployment/app -n production --timeout=300s
+          ./scripts/healthcheck.sh prod
+
+      - name: Configure HPA for production
+        run: |
+          kubectl apply -f k8s/manifests/app/hpa.yaml -n production
+
+  notify-failure:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: failure()
+    steps:
+      - name: Send failure notification
+        run: |
+          echo "Deployment failed - sending notification"
+          curl -X POST ${{ secrets.SLACK_WEBHOOK }} \
+            -H 'Content-Type: application/json' \
+            -d '{"text":"Deployment failed for ${{ github.repository }}"}'

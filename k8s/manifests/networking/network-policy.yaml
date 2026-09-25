@@ -1,0 +1,338 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fintech-default-deny-all
+  namespace: fintech-prod
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fintech-api-gateway-policy
+  namespace: fintech-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: fintech-api-gateway
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Permitir tráfico desde el Ingress Controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Permitir tráfico desde servicios de monitoreo
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # Permitir DNS
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Permitir comunicación con servicios internos
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: fintech-prod
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Permitir acceso a APIs externas necesarias (AWS, servicios de pago)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fintech-payments-service-policy
+  namespace: fintech-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: fintech-payments-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Solo el API Gateway puede acceder al servicio de pagos
+    - from:
+        - podSelector:
+            matchLabels:
+              app: fintech-api-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+    # Comunicación con base de datos
+    - to:
+        - podSelector:
+            matchLabels:
+              app: fintech-postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Comunicación con Redis para caché
+    - to:
+        - podSelector:
+            matchLabels:
+              app: fintech-redis
+      ports:
+        - protocol: TCP
+          port: 6379
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fintech-accounts-service-policy
+  namespace: fintech-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: fintech-accounts-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: fintech-api-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app: fintech-postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fintech-transactions-service-policy
+  namespace: fintech-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: fintech-transactions-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: fintech-api-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app: fintech-postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: fintech-kafka
+      ports:
+        - protocol: TCP
+          port: 9092
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fintech-users-service-policy
+  namespace: fintech-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: fintech-users-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: fintech-api-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app: fintech-postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fintech-database-policy
+  namespace: fintech-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: fintech-postgres
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Solo servicios internos pueden acceder a la base de datos
+    - from:
+        - podSelector:
+            matchLabels:
+              app: fintech-payments-service
+    - from:
+        - podSelector:
+            matchLabels:
+              app: fintech-accounts-service
+    - from:
+        - podSelector:
+            matchLabels:
+              app: fintech-transactions-service
+    - from:
+        - podSelector:
+            matchLabels:
+              app: fintech-users-service
+    - from:
+        - podSelector:
+            matchLabels:
+              app: fintech-admin-service
+      ports:
+        - protocol: TCP
+          port: 5432
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fintech-redis-policy
+  namespace: fintech-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: fintech-redis
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: fintech-payments-service
+    - from:
+        - podSelector:
+            matchLabels:
+              app: fintech-api-gateway
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fintech-monitoring-policy
+  namespace: fintech-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: fintech-exporter
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # Permitir métricas a Prometheus
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9090
+---
+# Stub: Políticas de red zero-trust para cumplimiento de seguridad en fintech.
+# El estudiante debe ajustar las reglas según los requisitos específicos de cada servicio.

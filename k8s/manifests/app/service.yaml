@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: fintech-app-service
+  namespace: fintech-prod
+  labels:
+    app: fintech-app
+    tier: application
+    environment: production
+spec:
+  type: ClusterIP
+  selector:
+    app: fintech-app
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: 8080
+  - name: https
+    protocol: TCP
+    port: 443
+    targetPort: 8443
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
+  publishNotReadyAddresses: false
+  internalTrafficPolicy: Cluster
